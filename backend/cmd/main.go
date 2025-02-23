@@ -64,7 +64,10 @@ func uploadToS3(filePath, deviceID string) (string, error) {
 
 // Call AWS Lambda to classify audio
 func classifyNoise(s3Key string) (map[string]interface{}, error) {
-	payload, _ := json.Marshal(map[string]string{"s3_key": s3Key})
+	payload, _ := json.Marshal(map[string]string{
+		"s3_bucket": "noise-mapping-audio",
+		"s3_key":    s3Key,
+	})
 
 	resp, err := lambdaClient.Invoke(context.TODO(), &lambda.InvokeInput{
 		FunctionName: aws.String(lambdaName),
