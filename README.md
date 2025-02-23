@@ -12,3 +12,4 @@ This project aims to **collect, analyze, and visualize noise pollution** using *
 - `data` - Contains collected datasets for noise pollution analysis.
 - `docs` - Contains research and documentation related to the project.
 
+## AWS Setup
