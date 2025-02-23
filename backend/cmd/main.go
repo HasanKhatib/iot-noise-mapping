@@ -80,18 +80,18 @@ func classifyNoise(s3Key string) (map[string]interface{}, error) {
 	return result, nil
 }
 
-// Handle file upload
 func handleUpload(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
+		log.Printf("[ERROR] File upload error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file"})
 		return
 	}
 
-	// Save locally for testing
+	// Save locally for debugging
 	filePath := fmt.Sprintf("./uploads/%s", file.Filename)
-	err = c.SaveUploadedFile(file, filePath)
-	if err != nil {
+	if err := c.SaveUploadedFile(file, filePath); err != nil {
+		log.Printf("[ERROR] Failed to save file locally: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
 		return
 	}
@@ -99,6 +99,7 @@ func handleUpload(c *gin.Context) {
 	// Upload to S3
 	s3Key, err := uploadToS3(filePath, "test-device")
 	if err != nil {
+		log.Printf("[ERROR] Failed to upload to S3: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload to S3"})
 		return
 	}
@@ -106,10 +107,12 @@ func handleUpload(c *gin.Context) {
 	// Classify using Lambda
 	classification, err := classifyNoise(s3Key)
 	if err != nil {
+		log.Printf("[ERROR] Lambda classification failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to classify audio"})
 		return
 	}
 
+	log.Printf("[SUCCESS] Classification result: %v", classification)
 	c.JSON(http.StatusOK, gin.H{"classification": classification})
 }
 
@@ -117,6 +120,19 @@ func handleUpload(c *gin.Context) {
 func main() {
 	initAWS()
 	r := gin.Default()
+
+	// Enable debug logs
+	gin.SetMode(gin.DebugMode)
+	r.Use(gin.Logger())
+
+	// Add middleware to catch errors
+	r.Use(func(c *gin.Context) {
+		c.Next()
+		for _, err := range c.Errors {
+			log.Printf("[ERROR] %v", err.Err)
+		}
+	})
+
 	r.POST("/upload", handleUpload)
 	r.Run(":8080")
 }
