@@ -2,7 +2,7 @@
 
 AWS_REGION="eu-west-1"  # App Runner is NOT in eu-north-1, so we use eu-west-1
 S3_BUCKET="iot-noise-mapping-audio"
-DYNAMODB_TABLE="NoiseClassification"
+DYNAMODB_TABLE="RecordingClassification"
 IAM_USER="iot-noise-mapping-user"
 IAM_POLICY="IOTNoiseMappingPolicy"
 ECR_REPO="noise-mapping-service"
@@ -23,12 +23,13 @@ if aws dynamodb describe-table --table-name $DYNAMODB_TABLE --region $AWS_REGION
 else
     aws dynamodb create-table \
         --table-name $DYNAMODB_TABLE \
-        --attribute-definitions AttributeName=device_id,AttributeType=S \
-        --key-schema AttributeName=device_id,KeyType=HASH \
+        --attribute-definitions AttributeName=UUID,AttributeType=S \
+        --key-schema AttributeName=UUID,KeyType=HASH \
         --billing-mode PAY_PER_REQUEST \
         --region $AWS_REGION
-    echo "✅ DynamoDB table created!"
+    echo "✅ DynamoDB table created with primary key UUID and additional columns!"
 fi
+
 
 # 3️⃣ **Create IAM User**
 if aws iam get-user --user-name $IAM_USER 2>/dev/null; then

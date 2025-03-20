@@ -10,6 +10,8 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi import Form
 from starlette.responses import JSONResponse, StreamingResponse
 from config import AWS_REGION, S3_BUCKET, DYNAMODB_TABLE, AWS_ACCESS_KEY, AWS_SECRET_KEY
+import uuid
+from datetime import datetime, timezone
 
 # Initialize FastAPI
 app = FastAPI()
@@ -85,32 +87,58 @@ def classify_audio(audio_path):
 @app.post("/upload")
 async def upload_audio(
     file: UploadFile = File(...),
-    device_id: str = Form("default-device")  # Ensure `device_id` is provided
+    device_id: str = Form("default-device"),
+    longitude: str = Form(None),
+    latitude: str = Form(None),
+    zip_code: str = Form(None)
 ):
     """ Uploads WAV file to S3 and stores classification metadata in DynamoDB """
     try:
-        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+        # Generate timestamp and formatted time
+        timestamp = int(datetime.now(timezone.utc).timestamp())
+        formatted_time = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        filename = f"{device_id}-{formatted_time}.wav"
+
+        # Save file locally
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
         with open(file_path, "wb") as buffer:
             buffer.write(file.file.read())
 
         # Upload to S3
-        s3_client.upload_file(file_path, S3_BUCKET, file.filename)
+        s3_client.upload_file(file_path, S3_BUCKET, filename)
 
         # Classify audio
         label, confidence = classify_audio(file_path)
 
+        # Generate UUID for the record
+        record_uuid = str(uuid.uuid4())
+
         # Store metadata in DynamoDB
         table.put_item(Item={
-            "device_id": device_id,  # Include device_id as the partition key
-            "filename": file.filename,
-            "timestamp": str(file.file.fileno()),  # Ensure timestamp is a string
-            "location": "55.6050, 13.0038",  # Placeholder for now
+            "UUID": record_uuid,  # Hash key
+            "filename": filename,
+            "time": formatted_time,
+            "timestamp": timestamp,
+            "device_id": device_id,
+            "zipcode": zip_code,
+            "longitude": longitude,
+            "latitude": latitude,
             "label": label,
-            "confidence": Decimal(str(confidence))  # Convert float to Decimal
+            "confidence": Decimal(str(confidence)) if confidence else None
         })
 
         return JSONResponse(content={
-            "classification": {"category": label, "confidence": confidence}
+            "classification": {"category": label, "confidence": confidence},
+            "metadata": {
+                "UUID": record_uuid,
+                "filename": filename,
+                "time": formatted_time,
+                "timestamp": timestamp,
+                "device_id": device_id,
+                "zipcode": zip_code,
+                "longitude": longitude,
+                "latitude": latitude
+            }
         })
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
