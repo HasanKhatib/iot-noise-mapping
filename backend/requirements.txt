@@ -1,9 +1,9 @@
-fastapi
-uvicorn
-tensorflow
-tensorflow-hub
+boto3
 librosa
 numpy
-python-multipart
-boto3
+tensorflow
+tensorflow-hub
+fastapi
 starlette
+uvicorn
+python-multipart

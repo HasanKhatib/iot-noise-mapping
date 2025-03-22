@@ -31,6 +31,14 @@ s3_client = session.client("s3")
 dynamodb = session.resource("dynamodb")
 table = dynamodb.Table(DYNAMODB_TABLE)
 
+# Disable GPU usage for TensorFlow
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+# Log TensorFlow device information
+print("TensorFlow is running on the following devices:")
+for device in tf.config.list_physical_devices():
+    print(f"- {device.device_type}: {device.name}")
+
 # Load YAMNet model
 YAMNET_MODEL_HANDLE = "https://tfhub.dev/google/yamnet/1"
 yamnet = hub.load(YAMNET_MODEL_HANDLE)
@@ -44,7 +52,7 @@ with open("yamnet_class_map.csv", "r", encoding="utf-8") as f:
     CLASS_MAP = [row[2].strip() for row in reader]  # Ensure proper class mapping
 
 print(f"Loaded {len(CLASS_MAP)} class labels.")  # Debugging step
-    
+
 UPLOAD_FOLDER = "./uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
@@ -87,17 +95,18 @@ def classify_audio(audio_path):
 @app.post("/upload")
 async def upload_audio(
     file: UploadFile = File(...),
-    device_id: str = Form("default-device"),
+    device_id: str = Form("default_device"),
     longitude: str = Form(None),
     latitude: str = Form(None),
-    zip_code: str = Form(None)
+    zip_code: str = Form(None),
+    noise_level: float = Form(None)  # New parameter
 ):
     """ Uploads WAV file to S3 and stores classification metadata in DynamoDB """
     try:
         # Generate timestamp and formatted time
         timestamp = int(datetime.now(timezone.utc).timestamp())
         formatted_time = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        filename = f"{device_id}-{formatted_time}.wav"
+        filename = f"{device_id}_{formatted_time}.wav"  # Use underscores
 
         # Save file locally
         file_path = os.path.join(UPLOAD_FOLDER, filename)
@@ -123,6 +132,7 @@ async def upload_audio(
             "zipcode": zip_code,
             "longitude": longitude,
             "latitude": latitude,
+            "noise_level": Decimal(str(noise_level)) if noise_level else None,  # Save noise_level
             "label": label,
             "confidence": Decimal(str(confidence)) if confidence else None
         })
@@ -137,7 +147,8 @@ async def upload_audio(
                 "device_id": device_id,
                 "zipcode": zip_code,
                 "longitude": longitude,
-                "latitude": latitude
+                "latitude": latitude,
+                "noise_level": noise_level  # Include noise_level in response
             }
         })
     except Exception as e:
@@ -159,6 +170,9 @@ def export_data():
         headers={"Content-Disposition": "attachment; filename=classified_data.csv"},
     )
 
+@app.get("/")
+def read_root():
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn

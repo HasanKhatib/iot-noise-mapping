@@ -8,6 +8,7 @@ CREATE TABLE RecordingClassification (
     zipcode STRING,
     longitude STRING,
     latitude STRING,
+    noise_level NUMBER, -- Add noise_level field
     label STRING,
     confidence NUMBER
 );

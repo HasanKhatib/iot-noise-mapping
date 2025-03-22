@@ -6,6 +6,7 @@ RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+COPY yamnet_class_map.csv /app/yamnet_class_map.csv
 EXPOSE 8080
 
 # Run FastAPI app
