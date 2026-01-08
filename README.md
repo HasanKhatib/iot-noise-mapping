@@ -1,74 +1,102 @@
 # IoT-Based Noise Pollution Mapping
 
 This project is an **IoT-based noise pollution monitoring system** that:
-- Uses **Arduino Nano RP2040** & **ESP32** sensors to collect noise levels.
-- Stores **audio files on AWS S3**.
-- Processes data using **FastAPI & TensorFlow (YAMNet)**.
-- Saves classification results in **AWS DynamoDB**.
-- Runs on **AWS App Runner (Serverless, No EC2 Required)**.
+- Uses **ESP32** sensors with MAX9814 microphones to capture and classify environmental audio
+- Stores **audio files on AWS S3** for persistent storage
+- Processes data using **FastAPI & TensorFlow (YAMNet/PANNs)** for audio classification
+- Saves classification results in **AWS DynamoDB** with geolocation metadata
+- Supports both **cloud deployment** (AWS App Runner) and **local development** (LocalStack)
 
+## 📁 Project Structure
 
-## Repository Structure
-- `backend` - Contains the backend code for the project.
-- `edge-devices/**` - MicroPython/C++ firmware for IoT sensors (Arduino Nano RP2040 & ESP32).
+```
+iot-noise-mapping/
+├── backend/                      # FastAPI service for audio processing
+│   ├── main.py                   # Main API endpoints and logic
+│   ├── classifier.py             # Audio classification module
+│   ├── config.py                 # Configuration settings
+│   ├── requirements.txt          # Python dependencies
+│   ├── Dockerfile                # Container image for deployment
+│   ├── db/                       # Database utilities
+│   │   ├── db_handler.py         # DynamoDB operations
+│   │   └── schema.sql            # Database schema
+│   └── uploads/                  # Temporary audio file storage
+├── embedded/                     # IoT device firmware
+│   └── esp32_noise_mapping_edge/ # ESP32 with MAX9814 microphone
+│       ├── platformio.ini        # PlatformIO configuration
+│       └── src/
+│           └── main.cpp          # ESP32 firmware (audio capture & upload)
+├── scripts/                      # Deployment and setup scripts
+│   ├── setup-aws.sh              # AWS infrastructure setup
+│   └── deploy.sh                 # App Runner deployment
+├── docs/                         # Detailed documentation
+│   ├── local-development.md      # LocalStack setup guide
+│   └── aws-deployment.md         # Production AWS deployment guide
+└── README.md                     # This file
+```
 
-- `frontend` - Contains the frontend code for the project.
-    - `aws-dashboards` - AWS-based dashboards for data visualization.
-- `data` - Contains collected datasets for noise pollution analysis.
-- `docs` - Contains research and documentation related to the project.
+## 🚀 Quick Start
 
-## 🔧 Prerequisites
-Before setting up the project, install:  
-- 🐍 **Python 3.10+** → [Install Python](https://www.python.org/downloads/)  
-- 🐳 **Docker** → [Install Docker](https://docs.docker.com/get-docker/)  
-- ☁️ **AWS CLI** → [Install AWS CLI](https://aws.amazon.com/cli/)
+### Local Development with LocalStack
 
+For local development and testing without AWS costs, see the detailed guide:
 
-## ⚡ Setup AWS Infrastructure (Run Once)
-Run the setup script to **automate AWS resource creation**:  
-```sh
+**📖 [Local Development Guide](docs/local-development.md)**
+
+Quick start:
+```bash
+# Start LocalStack
+localstack start
+
+# Set environment variables
+export LOCAL_AWS_ACCESS_KEY="test"
+export LOCAL_AWS_ACCESS_SECRET="test"
+
+# Run the backend
+cd backend
+python3 main.py
+```
+
+### AWS Production Deployment
+
+For production deployment to AWS App Runner with real AWS services:
+
+**📖 [AWS Deployment Guide](docs/aws-deployment.md)**
+
+Quick start:
+```bash
+# Setup AWS infrastructure
 chmod +x scripts/setup-aws.sh
 ./scripts/setup-aws.sh
-```
-✅ This will:
-- Create an S3 bucket (iot-noise-mapping-audio)
-- Create a DynamoDB table (NoiseClassification)
-- Set up an IAM user & policies
-- Prepare AWS Elastic Container Registry (ECR)
 
-## 🏗 Build & Deploy the FastAPI Service
-- Retrieve AWS Account ID and set it as an environment variable:
-```sh
-export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-```
-- Build & Push Docker Image to AWS ECR
-```sh
-aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com
-
-docker build -t noise-mapping-service .
-
-docker tag noise-mapping-service:latest $AWS_ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/noise-mapping-service:latest
-
-docker push $AWS_ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/noise-mapping-service:latest
-```
-
-- Deploy the Service to AWS App Runner
-```sh
+# Deploy to App Runner
 chmod +x scripts/deploy.sh
 ./scripts/deploy.sh
 ```
 
-## 🚀 Test the service
+## 🔧 Prerequisites
 
-- Upload an audio file
-```sh
-curl -X POST "https://<APP_RUNNER_URL>/upload" \
-     -H "Content-Type: multipart/form-data" \
-     -F "file=@./ID_0009P22A.wav" \
-     -F "device_id=RP2040_01"
-```
+- **Python 3.10+** → [Install Python](https://www.python.org/downloads/)
+- **Docker** → [Install Docker](https://docs.docker.com/get-docker/)
+- **LocalStack** (for local dev) → `pip install localstack`
+- **AWS CLI** (for production) → [Install AWS CLI](https://aws.amazon.com/cli/)
+- **PlatformIO** (for ESP32) → [Install PlatformIO](https://platformio.org/install)
 
-- 📊 Export Classification Data as CSV
-```sh
-curl -X GET "https://<APP_RUNNER_URL>/export"
-```
+## 🎯 Key Features
+
+- **Real-time Audio Classification**: YAMNet and PANNs models for sound event detection
+- **Edge Computing**: Audio capture and preprocessing on ESP32 devices
+- **Scalable Storage**: S3 for audio files, DynamoDB for metadata
+- **Geolocation Support**: GPS coordinates and noise level tracking
+- **Local Development**: Full LocalStack integration for offline development
+- **Serverless Deployment**: AWS App Runner for automatic scaling
+
+## 📊 API Endpoints
+
+- `POST /upload` - Upload and classify audio from IoT devices
+- `GET /export` - Export classification data as CSV
+- `GET /` - Health check endpoint
+
+## 📄 License
+
+See [LICENSE](LICENSE) file for details.

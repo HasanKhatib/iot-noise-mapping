@@ -7,3 +7,4 @@ fastapi
 starlette
 uvicorn
 python-multipart
+panns-inference

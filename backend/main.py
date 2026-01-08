@@ -9,16 +9,21 @@ from decimal import Decimal
 from fastapi import FastAPI, File, UploadFile
 from fastapi import Form
 from starlette.responses import JSONResponse, StreamingResponse
-from config import AWS_REGION, S3_BUCKET, DYNAMODB_TABLE, AWS_ACCESS_KEY, AWS_SECRET_KEY
+from config import AWS_REGION, S3_BUCKET, DYNAMODB_TABLE, AWS_ACCESS_KEY, AWS_SECRET_KEY, MODEL_TYPE
 import uuid
 from datetime import datetime, timezone
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI
 app = FastAPI()
 
 # Log AWS access key and secret
-print(f"AWS Access Key: {AWS_ACCESS_KEY}")
-print(f"AWS Secret Key: {AWS_SECRET_KEY}")
+logger.info(f"AWS Access Key: {AWS_ACCESS_KEY}")
+logger.info(f"AWS Secret Key: {AWS_SECRET_KEY}")
 
 # Initialize AWS Clients with local credentials
 session = boto3.Session(
@@ -27,68 +32,95 @@ session = boto3.Session(
     region_name=AWS_REGION,
 )
 
-s3_client = session.client("s3")
-dynamodb = session.resource("dynamodb")
+s3_client = session.client("s3", endpoint_url="http://localhost:4566")
+dynamodb = session.resource("dynamodb", endpoint_url="http://localhost:4566")
 table = dynamodb.Table(DYNAMODB_TABLE)
 
-# Disable GPU usage for TensorFlow
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 # Log TensorFlow device information
-print("TensorFlow is running on the following devices:")
+logger.info("TensorFlow is running on the following devices:")
 for device in tf.config.list_physical_devices():
-    print(f"- {device.device_type}: {device.name}")
+    logger.info(f"- {device.device_type}: {device.name}")
 
-# Load YAMNet model
-YAMNET_MODEL_HANDLE = "https://tfhub.dev/google/yamnet/1"
-yamnet = hub.load(YAMNET_MODEL_HANDLE)
+# Load Model based on configuration
+logger.info(f"Loading model: {MODEL_TYPE}")
 
-# Load Class Labels
-CLASS_MAP = []
-
-with open("yamnet_class_map.csv", "r", encoding="utf-8") as f:
-    reader = csv.reader(f)
-    next(reader)  # Skip header
-    CLASS_MAP = [row[2].strip() for row in reader]  # Ensure proper class mapping
-
-print(f"Loaded {len(CLASS_MAP)} class labels.")  # Debugging step
+if MODEL_TYPE == "panns":
+    try:
+        from panns_inference import AudioTagging
+        panns_model = AudioTagging(checkpoint_path=None, device='cpu')
+        yamnet = None
+        CLASS_MAP = None
+        logger.info("PANNs model loaded successfully")
+    except ImportError:
+        logger.error("PANNs not installed. Install with: pip install panns-inference")
+        raise
+else:
+    # Load YAMNet model
+    YAMNET_MODEL_HANDLE = "https://tfhub.dev/google/yamnet/1"
+    yamnet = hub.load(YAMNET_MODEL_HANDLE)
+    panns_model = None
+    
+    # Load Class Labels
+    CLASS_MAP = []
+    with open("yamnet_class_map.csv", "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        next(reader)  # Skip header
+        CLASS_MAP = [row[2].strip() for row in reader]  # Ensure proper class mapping
+    
+    logger.info(f"Loaded YAMNet with {len(CLASS_MAP)} class labels.")
 
 UPLOAD_FOLDER = "./uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 def classify_audio(audio_path):
-    """Classifies an audio file using YAMNet"""
+    """Classifies an audio file using YAMNet or PANNs"""
     try:
-        # Load and preprocess audio
-        audio_data, sr = librosa.load(audio_path, sr=16000, mono=True)
-        audio_data = np.array(audio_data, dtype=np.float32)  # Ensure correct dtype
-        audio_data = np.squeeze(audio_data)  # Ensure it's a 1D array
+        if MODEL_TYPE == "panns":
+            # Use PANNs model
+            result = panns_model.inference(audio_path)
+            
+            # Get top prediction
+            clipwise_output = result['clipwise_output'][0]
+            top_class_idx = np.argmax(clipwise_output)
+            confidence = float(clipwise_output[top_class_idx])
+            label = result['labels'][top_class_idx]
+            
+            logger.info(f"PANNs Classification - Label: {label}, Confidence: {confidence}")
+            return label, confidence
+        else:
+            # Use YAMNet model
+            # Load and preprocess audio (YAMNet expects 16kHz, so we resample)
+            audio_data, sr = librosa.load(audio_path, sr=16000, mono=True)
+            audio_data = np.array(audio_data, dtype=np.float32)  # Ensure correct dtype
+            audio_data = np.squeeze(audio_data)  # Ensure it's a 1D array
 
-        # Run YAMNet model
-        scores, embeddings, spectrogram = yamnet(audio_data)
+            # Run YAMNet model
+            scores, embeddings, spectrogram = yamnet(audio_data)
 
-        # Ensure YAMNet returns results
-        if scores.shape[0] == 0:
-            return "Unknown", 0.0
+            # Ensure YAMNet returns results
+            if scores.shape[0] == 0:
+                return "Unknown", 0.0
 
-        # Compute mean scores & get top category
-        mean_scores = np.mean(scores.numpy(), axis=0)
-        top_class = np.argmax(mean_scores)
+            # Compute mean scores & get top category
+            mean_scores = np.mean(scores.numpy(), axis=0)
+            top_class = np.argmax(mean_scores)
 
-        print(f"Top Class Index: {top_class}, Confidence: {mean_scores[top_class]}")
+            logger.info(f"YAMNet - Top Class Index: {top_class}, Confidence: {mean_scores[top_class]}")
 
-        # Ensure class index is within range
-        if top_class >= len(CLASS_MAP):
-            return "Unknown", 0.0
+            # Ensure class index is within range
+            if top_class >= len(CLASS_MAP):
+                return "Unknown", 0.0
 
-        confidence = mean_scores[top_class]
-        
-        print("Top Class Index:", top_class, "Class Label:", CLASS_MAP[top_class], "Confidence:", confidence)
+            confidence = mean_scores[top_class]
+            logger.info(f"YAMNet Classification - Label: {CLASS_MAP[top_class]}, Confidence: {confidence}")
 
-        return CLASS_MAP[top_class], float(confidence)
+            return CLASS_MAP[top_class], float(confidence)
 
     except Exception as e:
+        logger.error(f"Error in classify_audio: {str(e)}")
         return f"Error: {str(e)}", 0.0
 
 
@@ -101,6 +133,7 @@ async def upload_audio(
     zip_code: str = Form(None),
     noise_level: float = Form(None)  # New parameter
 ):
+    logger.info(f"/upload endpoint called for device_id={device_id}")
     """ Uploads WAV file to S3 and stores classification metadata in DynamoDB """
     try:
         # Generate timestamp and formatted time
@@ -156,13 +189,14 @@ async def upload_audio(
 
 @app.get("/export")
 def export_data():
+    logger.info("/export endpoint called")
     """Exports stored classification results as a CSV file"""
     response = table.scan()
     items = response["Items"]
 
-    csv_data = "filename,timestamp,location,label,confidence\n"
+    csv_data = "filename,timestamp,latitude,longitude,label,confidence\n"
     for item in items:
-        csv_data += f"{item['filename']},{item['timestamp']},{item['location']},{item['label']},{item['confidence']}\n"
+        csv_data += f"{item['filename']},{item['timestamp']},{item.get('latitude','')},{item.get('longitude','')},{item['label']},{item['confidence']}\n"
 
     return StreamingResponse(
         iter([csv_data]),
@@ -172,9 +206,10 @@ def export_data():
 
 @app.get("/")
 def read_root():
+    logger.info("/ endpoint called (health check)")
     return {"status": "ok"}
 
 if __name__ == "__main__":
+    logger.info("Starting FastAPI app on http://0.0.0.0:8080 ...")
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=8080)
